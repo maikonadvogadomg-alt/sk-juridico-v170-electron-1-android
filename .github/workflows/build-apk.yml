@@ -1,0 +1,104 @@
+name: Build APK — sk-juridico-v170-electron-1
+
+on:
+  push:
+    branches: [main, master]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Java 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      # ── Baixar gradle-wrapper.jar (necessário para ./gradlew funcionar) ──
+      - name: Baixar Gradle Wrapper JAR
+        run: |
+          mkdir -p android/gradle/wrapper
+          # Baixar distribuição Gradle e extrair o wrapper JAR
+          curl -fsSLo /tmp/gradle.zip \
+            "https://services.gradle.org/distributions/gradle-8.11.1-bin.zip"
+          unzip -qj /tmp/gradle.zip \
+            "gradle-8.11.1/lib/gradle-cli-main.jar" \
+            "gradle-8.11.1/lib/gradle-launcher-8.11.1.jar" \
+            -d /tmp/gradle-jars/ 2>/dev/null || true
+          # Alternativa: usar gradle diretamente via PATH
+          echo "/tmp/gradle-bin/bin" >> $GITHUB_PATH
+          mkdir -p /tmp/gradle-bin
+          unzip -q /tmp/gradle.zip -d /tmp/gradle-extract/
+          ln -sf /tmp/gradle-extract/gradle-8.11.1 /tmp/gradle-bin/gradle-dist
+          echo "/tmp/gradle-extract/gradle-8.11.1/bin" >> $GITHUB_PATH
+          # Criar wrapper JAR a partir do jar nativo
+          find /tmp/gradle-extract -name "gradle-wrapper*.jar" 2>/dev/null | head -1 | \
+            xargs -I{} cp {} android/gradle/wrapper/gradle-wrapper.jar 2>/dev/null || true
+
+      # SEM Node.js, SEM npm, SEM Capacitor — Android puro WebView
+      - name: Permissão gradlew
+        working-directory: android
+        run: chmod +x gradlew
+
+      - name: Build APK (gradlew)
+        working-directory: android
+        timeout-minutes: 25
+        continue-on-error: true
+        id: build_wrapper
+        env:
+          GRADLE_OPTS: "-Xmx3g -Dorg.gradle.daemon=false -Dfile.encoding=UTF-8"
+          ANDROID_HOME: /usr/local/lib/android/sdk
+        run: ./gradlew assembleDebug --no-daemon --stacktrace
+
+      # Fallback: usar gradle direto caso o wrapper falhe
+      - name: Build APK (gradle direto — fallback)
+        if: steps.build_wrapper.outcome == 'failure'
+        working-directory: android
+        timeout-minutes: 25
+        env:
+          GRADLE_OPTS: "-Xmx3g -Dorg.gradle.daemon=false"
+          ANDROID_HOME: /usr/local/lib/android/sdk
+        run: |
+          GRADLE_BIN=$(find /tmp/gradle-extract -name "gradle" -type f 2>/dev/null | head -1)
+          echo "Usando Gradle: $GRADLE_BIN"
+          "$GRADLE_BIN" assembleDebug --no-daemon --stacktrace
+
+      - name: Verificar APK gerado
+        run: |
+          APK=$(find android -name "*.apk" 2>/dev/null | head -1)
+          if [ -z "$APK" ]; then echo "❌ APK não encontrado!"; exit 1; fi
+          echo "✅ APK: $APK"
+          ls -lh "$APK"
+          echo "APK_PATH=$APK" >> $GITHUB_ENV
+
+      - name: Renomear APK
+        run: |
+          cp "$APK_PATH" "sk-juridico-v170-electron-1-v1.0.0.apk"
+
+      - name: Deletar release anterior
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release delete latest-apk --yes 2>/dev/null || true
+
+      - name: Publicar Release com APK
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create latest-apk \
+            --title "✅ sk-juridico-v170-electron-1 v1.0.0 — APK" \
+            --notes "## APK gerado automaticamente
+
+          **Como instalar no celular:**
+          1. Clique no arquivo **.apk** abaixo para baixar
+          2. No Android: Configurações → Segurança → **Fontes desconhecidas** ✓
+          3. Abra o arquivo .apk → **Instalar**
+
+          > Gerado com Android 35, AGP 8.7.3, Gradle 8.11.1" \
+            --latest \
+            "sk-juridico-v170-electron-1-v1.0.0.apk"

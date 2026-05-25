@@ -1,0 +1,6 @@
+tasks:
+  - init: bash .devcontainer/setup-android.sh
+    command: echo "✅ Ambiente pronto! Execute: ./build.sh"
+vscode:
+  extensions:
+    - vscjava.vscode-java-pack

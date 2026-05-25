@@ -1,0 +1,1 @@
+-keep class com.github.skjuridicov170electron1.** { *; }
